@@ -1,9 +1,11 @@
 //NPM Packages
 const mongoose = require("mongoose");
+const dotenv = require("dotenv");
+dotenv.config();
 
 module.exports = connectDb = async () => {
   try {
-    await mongoose.connect("mongodb://localhost:27017", {
+    await mongoose.connect(process.env.MONGO_URL, {
       dbName: "pharmacy-management",
     });
     console.log("Connection Created");
