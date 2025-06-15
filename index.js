@@ -8,7 +8,7 @@ const app =  express()
 
 //middlewares
 app.use(cors({
-  origin: "https://new-alshifa-frontend.vercel.app",
+  origin: "http://localhost:5174",
   credentials: true
 }));
 app.use(cors());
