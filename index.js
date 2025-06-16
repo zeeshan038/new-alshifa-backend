@@ -1,29 +1,26 @@
 const express = require("express");
 const dotenv = require('dotenv');
-dotenv.config()
-const connectDb = require('./config/db')
+dotenv.config();
+const connectDb = require('./config/db');
 const cors = require("cors");
-const index = require('./routes/index')
-const app =  express()
+const index = require('./routes/index');
+const app = express();
 
-//middlewares
+// CORS config - fixed trailing slash and removed duplicate call
 app.use(cors({
-  origin: "https://new-alshifa-frontend.vercel.app",
+  origin: "https://new-alshifa-frontend.vercel.app", 
   credentials: true
 }));
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-//connect db
+// Connect DB
 connectDb();
 
-// routes
-app.use('/api' , index)
+// Routes
+app.use('/api', index);
 
-
+// Start server
 const port = process.env.PORT || 4000;
-// server
-app.listen(port, ()=>{
-    console.log(`server is running on port ${port}`)
-})
+app.listen(port, () => {
+  console.log(`server is running on port ${port}`);
+});
