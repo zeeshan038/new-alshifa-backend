@@ -288,19 +288,32 @@ module.exports.getProfitByHour = async (req, res) => {
 
 module.exports.totalSales = async (req, res) => {
   try {
-    // Pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // Search parameters
-    const { batchNumber, category, brand, name } = req.query;
+    const { batchNumber, category, brand, name, type } = req.query;
+
     const query = {};
 
+    // Date filter (daily / monthly)
+    const today = moment().startOf("day");
+    const endOfToday = moment().endOf("day");
+
+    if (type === "daily") {
+      query.createdAt = { $gte: today.toDate(), $lte: endOfToday.toDate() };
+    } else if (type === "monthly") {
+      query.createdAt = {
+        $gte: moment().startOf("month").toDate(),
+        $lte: moment().endOf("month").toDate(),
+      };
+    }
+
+    // Filters using regex (case-insensitive)
     if (category) query.category = { $regex: category, $options: "i" };
     if (brand) query.brand = { $regex: brand, $options: "i" };
 
-    // Find sales, populate batchId and medicineId
+    // Initial Mongo query (without name/batchNumber since those are populated)
     let salesResult = await sales
       .find(query)
       .sort({ createdAt: -1 })
@@ -309,38 +322,30 @@ module.exports.totalSales = async (req, res) => {
       .populate("batchId", "batchNumber")
       .populate("medicineId", "name");
 
-    // Filter by batchNumber if provided
+    // Filter by batch number
     if (batchNumber) {
-      salesResult = salesResult.filter(
-        (sale) =>
-          sale.batchId &&
-          sale.batchId.batchNumber &&
-          sale.batchId.batchNumber
-            .toLowerCase()
-            .includes(batchNumber.toLowerCase())
+      salesResult = salesResult.filter((sale) =>
+        sale.batchId?.batchNumber
+          ?.toLowerCase()
+          .includes(batchNumber.toLowerCase())
       );
     }
 
-    // Filter by medicine name if provided
+    // Filter by medicine name
     if (name) {
-      salesResult = salesResult.filter(
-        (sale) =>
-          sale.medicineId &&
-          sale.medicineId.name &&
-          sale.medicineId.name
-            .toLowerCase()
-            .includes(name.toLowerCase())
+      salesResult = salesResult.filter((sale) =>
+        sale.medicineId?.name
+          ?.toLowerCase()
+          .includes(name.toLowerCase())
       );
     }
 
-    const total = await sales.countDocuments(query);
-
+    // Return paginated + filtered result
     return res.status(200).json({
       status: true,
       sales: salesResult,
-      page,
-      totalPages: Math.ceil(total / limit),
-      total,
+      currentPage: page,
+      pageSize: limit,
     });
   } catch (error) {
     return res.status(500).json({

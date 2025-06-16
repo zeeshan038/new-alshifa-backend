@@ -17,6 +17,7 @@ const { generateToken } = require("../utils/methods");
  */
 module.exports.signup = async (req, res) => {
   const payload = req.body;
+  console.log("Incoming body:", req.body);
 
   //Error Handling
   const result = signupSchema(payload);
