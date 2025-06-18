@@ -7,7 +7,7 @@ const index = require('./routes/index');
 const app = express();
 
 app.use(cors({
-  origin: "http://localhost:5173", 
+  origin: "https://new-alshifa-frontend.vercel.app/", 
   credentials: true
 }));
 app.use(express.json());
