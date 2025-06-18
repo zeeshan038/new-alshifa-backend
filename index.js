@@ -6,14 +6,13 @@ const cors = require("cors");
 const index = require('./routes/index');
 const app = express();
 
-// CORS config - fixed trailing slash and removed duplicate call
 app.use(cors({
-  origin: "https://new-alshifa-frontend.vercel.app", 
+  origin: "http://localhost:5173", 
   credentials: true
 }));
+app.use(express.json());
 app.use(cors());
 
-// Connect DB
 connectDb();
 
 // Routes

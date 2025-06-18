@@ -12,63 +12,82 @@ const sales = require("../models/sales");
  * @access Private
  */
 module.exports.sellMed = async (req, res) => {
-  const { medicineId, quantity, sellingPrice } = req.body;
+  const { medicines } = req.body;
+
+  if (!Array.isArray(medicines) || medicines.length === 0) {
+    return res.status(400).json({ msg: "No medicines provided." });
+  }
 
   try {
-    const med = await medicine.findById(medicineId);
-    if (!med) {
-      return res.status(404).json({ msg: "Medicine not found." });
-    }
-
-    let qtyToSell = quantity;
     let totalProfit = 0;
+    const items = [];
 
-    const batches = await batch
-      .find({
+    for (let item of medicines) {
+      const { medicineId, quantity, sellingPrice } = item;
+
+      const med = await medicine.findById(medicineId);
+      if (!med) {
+        return res.status(404).json({ msg: `Medicine not found: ${medicineId}` });
+      }
+
+      let qtyToSell = quantity;
+
+      const batches = await batch.find({
         medicineId,
         quantity: { $gt: 0 },
-      })
-      .sort({ expiryDate: 1 });
+      }).sort({ expiryDate: 1 });
 
-    for (let batch of batches) {
-      if (qtyToSell <= 0) break;
+      for (let batchItem of batches) {
+        if (qtyToSell <= 0) break;
 
-      const sellQty = Math.min(batch.quantity, qtyToSell);
-      const profit = (sellingPrice - batch.purchasePrice) * sellQty;
+        const sellQty = Math.min(batchItem.quantity, qtyToSell);
 
-      // Reduce batch quantity
-      batch.quantity -= sellQty;
-      await batch.save();
+        // ✅ Use stored pricePerUnit directly
+        const unitPurchasePrice = batchItem.pricePerUnit || 0;
+        const rawProfit = (sellingPrice - unitPurchasePrice) * sellQty;
+        const profit = isNaN(rawProfit) ? 0 : rawProfit;
 
-      // Save sale record
-      await sales.create({
-        medicineId,
-        batchId: batch._id,
-        quantitySold: sellQty,
-        purchasePrice: batch.purchasePrice,
-        sellingPrice,
-        profit,
-        category: med.category,
-        brand: med.brand,
-      });
+        // Update batch quantity
+        batchItem.quantity -= sellQty;
+        await batchItem.save();
 
-      totalProfit += profit;
-      qtyToSell -= sellQty;
+        // Add to sold items
+        items.push({
+          medicineId,
+          batchId: batchItem._id,
+          quantitySold: sellQty,
+          purchasePrice: unitPurchasePrice,
+          sellingPrice,
+          profit,
+          category: med.category,
+          brand: med.brand,
+        });
+
+        totalProfit += profit;
+        qtyToSell -= sellQty;
+      }
+
+      if (qtyToSell > 0) {
+        return res.status(400).json({ msg: `Not enough stock for ${med.name}` });
+      }
     }
 
-    if (qtyToSell > 0) {
-      return res
-        .status(400)
-        .json({ msg: "Not enough stock to fulfill the sale." });
-    }
+    totalProfit = isNaN(totalProfit) ? 0 : totalProfit;
 
-    return res.status(200).json({
-      msg: "Medicine Sold Sucessfully",
+    const saleDoc = await sales.create({
+      items,
       totalProfit,
     });
+
+    return res.status(200).json({
+      msg: "All medicines sold successfully.",
+      totalProfit,
+      sale: saleDoc,
+    });
+
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ msg: err.message });
+    return res.status(500).json({ msg: "Server error", error: err.message });
   }
 };
 
@@ -87,22 +106,34 @@ module.exports.getProfitSummary = async (req, res) => {
 
     const getSummary = async (start, end) => {
       const result = await sales.aggregate([
-        { $match: { createdAt: { $gte: start, $lte: end } } },
+        {
+          $match: {
+            createdAt: { $gte: start, $lte: end }
+          }
+        },
         {
           $group: {
             _id: null,
             totalProfit: {
               $sum: {
-                $cond: [{ $gt: ["$profit", 0] }, "$profit", 0],
-              },
+                $cond: [
+                  { $gt: ["$totalProfit", 0] },
+                  "$totalProfit",
+                  0
+                ]
+              }
             },
             totalLoss: {
               $sum: {
-                $cond: [{ $lt: ["$profit", 0] }, "$profit", 0],
-              },
-            },
-          },
-        },
+                $cond: [
+                  { $lt: ["$totalProfit", 0] },
+                  "$totalProfit",
+                  0
+                ]
+              }
+            }
+          }
+        }
       ]);
 
       return result[0] || { totalProfit: 0, totalLoss: 0 };
@@ -110,55 +141,7 @@ module.exports.getProfitSummary = async (req, res) => {
 
     const today = await getSummary(todayStart, todayEnd);
     const month = await getSummary(monthStart, monthEnd);
-    const overall = await getSummary(new Date(0), new Date()); // all time
-
-    return res.status(200).json({
-      todayProfit: today.totalProfit,
-      todayLoss: Math.abs(today.totalLoss),
-      monthlyProfit: month.totalProfit,
-      monthlyLoss: Math.abs(month.totalLoss),
-      overallProfit: overall.totalProfit,
-      overallLoss: Math.abs(overall.totalLoss),
-    });
-  } catch (err) {
-    console.error("Error getting profit/loss summary:", err);
-    res.status(500).json({ msg: err.message });
-  }
-};
-module.exports.getProfitSummary = async (req, res) => {
-  try {
-    const now = moment();
-    const todayStart = now.clone().startOf("day").toDate();
-    const todayEnd = now.clone().endOf("day").toDate();
-    const monthStart = now.clone().startOf("month").toDate();
-    const monthEnd = now.clone().endOf("month").toDate();
-
-    const getSummary = async (start, end) => {
-      const result = await sales.aggregate([
-        { $match: { createdAt: { $gte: start, $lte: end } } },
-        {
-          $group: {
-            _id: null,
-            totalProfit: {
-              $sum: {
-                $cond: [{ $gt: ["$profit", 0] }, "$profit", 0],
-              },
-            },
-            totalLoss: {
-              $sum: {
-                $cond: [{ $lt: ["$profit", 0] }, "$profit", 0],
-              },
-            },
-          },
-        },
-      ]);
-
-      return result[0] || { totalProfit: 0, totalLoss: 0 };
-    };
-
-    const today = await getSummary(todayStart, todayEnd);
-    const month = await getSummary(monthStart, monthEnd);
-    const overall = await getSummary(new Date(0), new Date()); // all time
+    const overall = await getSummary(new Date(0), new Date());
 
     return res.status(200).json({
       todayProfit: today.totalProfit,
@@ -188,13 +171,14 @@ module.exports.getProfitByMonth = async (req, res) => {
     }
 
     const start = moment()
-      .year(year)
-      .month(month - 1)
+      .year(Number(year))
+      .month(Number(month) - 1)
       .startOf("month")
       .toDate();
+
     const end = moment()
-      .year(year)
-      .month(month - 1)
+      .year(Number(year))
+      .month(Number(month) - 1)
       .endOf("month")
       .toDate();
 
@@ -205,12 +189,12 @@ module.exports.getProfitByMonth = async (req, res) => {
           _id: null,
           totalProfit: {
             $sum: {
-              $cond: [{ $gt: ["$profit", 0] }, "$profit", 0],
+              $cond: [{ $gt: ["$totalProfit", 0] }, "$totalProfit", 0],
             },
           },
           totalLoss: {
             $sum: {
-              $cond: [{ $lt: ["$profit", 0] }, "$profit", 0],
+              $cond: [{ $lt: ["$totalProfit", 0] }, "$totalProfit", 0],
             },
           },
         },
@@ -231,6 +215,7 @@ module.exports.getProfitByMonth = async (req, res) => {
   }
 };
 
+
 /**
  * @description Get today's profit grouped by hour
  * @route GET /api/sale/profit-by-hour
@@ -238,8 +223,8 @@ module.exports.getProfitByMonth = async (req, res) => {
  */
 module.exports.getProfitByHour = async (req, res) => {
   try {
-    const startOfDay = moment2().tz("Asia/Karachi").startOf("day").toDate();
-    const endOfDay = moment2().tz("Asia/Karachi").endOf("day").toDate();
+    const startOfDay = moment().tz("Asia/Karachi").startOf("day").toDate();
+    const endOfDay = moment().tz("Asia/Karachi").endOf("day").toDate();
 
     const hourlyProfit = await sales.aggregate([
       {
@@ -249,6 +234,9 @@ module.exports.getProfitByHour = async (req, res) => {
             $lte: endOfDay,
           },
         },
+      },
+      {
+        $unwind: "$items",
       },
       {
         $addFields: {
@@ -263,7 +251,24 @@ module.exports.getProfitByHour = async (req, res) => {
       {
         $group: {
           _id: "$pktHour",
-          totalProfit: { $sum: "$profit" },
+          totalProfit: {
+            $sum: {
+              $cond: [
+                { $gt: ["$items.profit", 0] },
+                "$items.profit",
+                0,
+              ],
+            },
+          },
+          totalLoss: {
+            $sum: {
+              $cond: [
+                { $lt: ["$items.profit", 0] },
+                "$items.profit",
+                0,
+              ],
+            },
+          },
         },
       },
       {
@@ -274,6 +279,7 @@ module.exports.getProfitByHour = async (req, res) => {
     const formatted = hourlyProfit.map((entry) => ({
       hour: `${entry._id}:00`,
       profit: entry.totalProfit,
+      loss: Math.abs(entry.totalLoss),
     }));
 
     res.status(200).json({
@@ -286,6 +292,7 @@ module.exports.getProfitByHour = async (req, res) => {
   }
 };
 
+
 module.exports.totalSales = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -294,53 +301,74 @@ module.exports.totalSales = async (req, res) => {
 
     const { batchNumber, category, brand, name, type } = req.query;
 
-    const query = {};
-
-    // Date filter (daily / monthly)
     const today = moment().startOf("day");
     const endOfToday = moment().endOf("day");
 
+    const matchStage = {};
+
+    // Filter by time range
     if (type === "daily") {
-      query.createdAt = { $gte: today.toDate(), $lte: endOfToday.toDate() };
+      matchStage.createdAt = { $gte: today.toDate(), $lte: endOfToday.toDate() };
     } else if (type === "monthly") {
-      query.createdAt = {
+      matchStage.createdAt = {
         $gte: moment().startOf("month").toDate(),
         $lte: moment().endOf("month").toDate(),
       };
     }
 
-    // Filters using regex (case-insensitive)
-    if (category) query.category = { $regex: category, $options: "i" };
-    if (brand) query.brand = { $regex: brand, $options: "i" };
+    const pipeline = [
+      { $match: matchStage },
+      { $unwind: "$items" },
 
-    // Initial Mongo query (without name/batchNumber since those are populated)
-    let salesResult = await sales
-      .find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate("batchId", "batchNumber")
-      .populate("medicineId", "name");
+      // Optional filters inside items
+      {
+        $lookup: {
+          from: "medicines",
+          localField: "items.medicineId",
+          foreignField: "_id",
+          as: "medicineInfo",
+        },
+      },
+      { $unwind: "$medicineInfo" },
 
-    // Filter by batch number
-    if (batchNumber) {
-      salesResult = salesResult.filter((sale) =>
-        sale.batchId?.batchNumber
-          ?.toLowerCase()
-          .includes(batchNumber.toLowerCase())
-      );
-    }
+      {
+        $lookup: {
+          from: "batches",
+          localField: "items.batchId",
+          foreignField: "_id",
+          as: "batchInfo",
+        },
+      },
+      { $unwind: "$batchInfo" },
 
-    // Filter by medicine name
-    if (name) {
-      salesResult = salesResult.filter((sale) =>
-        sale.medicineId?.name
-          ?.toLowerCase()
-          .includes(name.toLowerCase())
-      );
-    }
+      {
+        $match: {
+          ...(category && { "items.category": { $regex: category, $options: "i" } }),
+          ...(brand && { "items.brand": { $regex: brand, $options: "i" } }),
+          ...(name && { "medicineInfo.name": { $regex: name, $options: "i" } }),
+          ...(batchNumber && {
+            "batchInfo.batchNumber": { $regex: batchNumber, $options: "i" },
+          }),
+        },
+      },
 
-    // Return paginated + filtered result
+      {
+        $project: {
+          _id: 1,
+          createdAt: 1,
+          "item": "$items",
+          medicine: "$medicineInfo.name",
+          batchNumber: "$batchInfo.batchNumber",
+        },
+      },
+
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+    ];
+
+    const salesResult = await sales.aggregate(pipeline);
+
     return res.status(200).json({
       status: true,
       sales: salesResult,

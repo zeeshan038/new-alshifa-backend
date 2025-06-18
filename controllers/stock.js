@@ -137,10 +137,11 @@ module.exports.getStockSummary = async (req, res) => {
 
     // 2. Total stock out (from all sales)
     const stockOutAgg = await Sale.aggregate([
+      { $unwind: "$items" },
       {
         $group: {
           _id: null,
-          totalStockOut: { $sum: "$quantitySold" },
+          totalStockOut: { $sum: "$items.quantitySold" },
         },
       },
     ]);

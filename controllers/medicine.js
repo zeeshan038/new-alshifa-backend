@@ -44,7 +44,6 @@ module.exports.addMedicine = async (req, res) => {
         manufacturer,
       });
     }
-    console.log("id", med._id);
 
     // Check if batch exists
     let existingBatch = await Batch.findOne({
@@ -56,14 +55,19 @@ module.exports.addMedicine = async (req, res) => {
 
     if (existingBatch) {
       existingBatch.quantity += quantity;
+      // Recalculate pricePerUnit if needed (optional)
+      existingBatch.pricePerUnit = existingBatch.purchasePrice / existingBatch.quantity;
       await existingBatch.save();
     } else {
+      const pricePerUnit = purchasePrice / quantity;
+
       await Batch.create({
         medicineId: med._id,
         batchNumber,
         purchasePrice,
         quantity,
         expiryDate,
+        pricePerUnit,
       });
     }
 

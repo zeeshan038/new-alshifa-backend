@@ -18,10 +18,15 @@ const batchSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  pricePerUnit: {
+    type: Number,
+    required: true,
+  },
   expiryDate: {
     type: Date,
     required: true,
   },
-}, { timestamps: true }); 
+}, { timestamps: true });
+
 
 module.exports = mongoose.model("Batch", batchSchema);
