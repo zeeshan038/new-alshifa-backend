@@ -159,6 +159,31 @@ module.exports.getMedicineById = async (req, res) => {
   }
 };
 
+
+module.exports.getMedicineInvenById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const medicineItem = await medicine.findById(id);
+    if (!medicineItem) {
+      return res.status(404).json({ status: false, msg: "Medicine not found" });
+    }
+
+    const batches = await Batch.find({ medicineId: id }).sort({
+      expiryDate: 1,
+    });
+
+    return res.status(200).json({
+      status: true,
+      medicine: medicineItem,
+      batches,
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ msg: error.message });
+  }
+};
+
 /**
  * @description Edit medicine
  * @route PUT api/medicine/edit/:id

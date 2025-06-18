@@ -46,8 +46,6 @@ module.exports.medicineSchema = (payload) => {
   return validationResult;
 };
 
-
-
 module.exports.updateMedSchema = (payload) => {
   const schema = Joi.object({
     name: Joi.string().trim().required().messages({
@@ -70,11 +68,11 @@ module.exports.updateMedSchema = (payload) => {
       "number.min": "Price cannot be negative.",
       "any.required": "Price is required.",
     }),
-    image: Joi.string().required().messages({
+    image: Joi.string().optional().messages({
       "string.base": "Image must be a string.",
       "string.empty": "Image cannot be empty.",
-      "any.required": "Image is required.",
     }),
+
     category: Joi.string().required().messages({
       "string.base": "Category must be a string.",
       "string.empty": "Category cannot be empty.",
