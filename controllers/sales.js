@@ -386,14 +386,114 @@ module.exports.totalSales = async (req, res) => {
 module.exports.totalSalesNo = async (req, res) => {
   try {
     const totalSalesNo = await sales.countDocuments({});
+    
+    // Calculate total sales amount
+    const salesAmountResult = await sales.aggregate([
+      {
+        $unwind: "$items"
+      },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: { $multiply: ["$items.sellingPrice", "$items.quantitySold"] } }
+        }
+      }
+    ]);
+    
+    const totalSalesAmount = salesAmountResult[0]?.totalAmount || 0;
+    
     return res.status(200).json({
       status: true,
       totalSalesNo,
+      totalSalesAmount
     });
   } catch (error) {
     return res.status(500).json({
       status: false,
       msg: error.message,
+    });
+  }
+};
+
+// total sales amount
+/**
+ * @description Get sales amounts summary (daily, monthly, total)
+ * @route GET /api/sale/sales-summary
+ * @access Private
+ */
+module.exports.getSalesAmountSummary = async (req, res) => {
+  try {
+    const now = moment();
+    const todayStart = now.clone().startOf("day").toDate();
+    const todayEnd = now.clone().endOf("day").toDate();
+    const monthStart = now.clone().startOf("month").toDate();
+    const monthEnd = now.clone().endOf("month").toDate();
+
+    const getSalesAmount = async (start, end) => {
+      const result = await sales.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: start, $lte: end }
+          }
+        },
+        {
+          $unwind: "$items"
+        },
+        {
+          $group: {
+            _id: null,
+            totalAmount: { 
+              $sum: { $multiply: ["$items.sellingPrice", "$items.quantitySold"] } 
+            },
+            totalItems: { 
+              $sum: "$items.quantitySold" 
+            },
+            salesCount: { 
+              $addToSet: "$_id" 
+            }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            totalAmount: 1,
+            totalItems: 1,
+            salesCount: { $size: "$salesCount" }
+          }
+        }
+      ]);
+
+      return result[0] || { totalAmount: 0, totalItems: 0, salesCount: 0 };
+    };
+
+    const daily = await getSalesAmount(todayStart, todayEnd);
+    const monthly = await getSalesAmount(monthStart, monthEnd);
+    const overall = await getSalesAmount(new Date(0), new Date());
+
+    return res.status(200).json({
+      status: true,
+      daily: {
+        amount: daily.totalAmount,
+        items: daily.totalItems,
+        count: daily.salesCount
+      },
+      monthly: {
+        amount: monthly.totalAmount,
+        items: monthly.totalItems,
+        count: monthly.salesCount
+      },
+      overall: {
+        amount: overall.totalAmount,
+        items: overall.totalItems,
+        count: overall.salesCount
+      }
+    });
+  } catch (err) {
+    console.error("Error getting sales summary:", err);
+    res.status(500).json({ 
+      status: false, 
+      msg: "Server error", 
+      error: err.message 
     });
   }
 };
