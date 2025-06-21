@@ -480,3 +480,187 @@ module.exports.getDailyStockMovements = async (req, res) => {
     res.status(500).json({ msg: "Server error", error: err.message });
   }
 };
+
+/**
+ * @description Get total stock value (purchase price)
+ * @route GET /api/stock/total-value
+ * @access Private
+ */
+module.exports.getTotalStockValue = async (req, res) => {
+  try {
+    // Calculate total stock value based on batch purchase prices
+    const stockValueAgg = await Batch.aggregate([
+      {
+        $match: {
+          quantity: { $gt: 0 } // Only consider batches with remaining stock
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalValue: { 
+            $sum: { $multiply: ["$pricePerUnit", "$quantity"] } 
+          },
+          totalItems: { $sum: "$quantity" }
+        }
+      }
+    ]);
+
+    const totalValue = stockValueAgg[0]?.totalValue || 0;
+    const totalItems = stockValueAgg[0]?.totalItems || 0;
+
+    // Get category-wise breakdown
+    const categoryValueAgg = await Batch.aggregate([
+      {
+        $match: {
+          quantity: { $gt: 0 }
+        }
+      },
+      {
+        $lookup: {
+          from: "medicines",
+          localField: "medicineId",
+          foreignField: "_id",
+          as: "medicine"
+        }
+      },
+      { $unwind: "$medicine" },
+      {
+        $group: {
+          _id: "$medicine.category",
+          value: { $sum: { $multiply: ["$pricePerUnit", "$quantity"] } },
+          items: { $sum: "$quantity" }
+        }
+      },
+      { $sort: { value: -1 } }
+    ]);
+
+    res.status(200).json({
+      status: true,
+      totalStockValue: totalValue,
+      totalItems: totalItems,
+      categoryBreakdown: categoryValueAgg.map(cat => ({
+        category: cat._id || "Uncategorized",
+        value: cat.value,
+        items: cat.items
+      }))
+    });
+  } catch (err) {
+    console.error("Error calculating total stock value:", err);
+    res.status(500).json({ 
+      status: false, 
+      msg: "Server error", 
+      error: err.message 
+    });
+  }
+};
+
+
+/**
+ * @description Get total stock value (purchase price)
+ * @route GET /api/stock/stocks-value
+ * @access Private
+ */
+/**
+ * @description Get total stock value (purchase price)
+ * @route GET /api/stock/available-value
+ * @access Private
+ */
+/**
+ * @description Get available stock value
+ * @route GET /api/stock/available-value
+ * @access Private
+ */
+/**
+ * @description Get available stock value
+ * @route GET /api/stock/available-value
+ * @access Private
+ */
+/**
+ * @description Get available stock value
+ * @route GET /api/stock/available-value
+ * @access Private
+ */
+module.exports.getAvailableStockValue = async (req, res) => {
+  try {
+    // 1. Total stock in (from all batches) with value
+    const stockInAgg = await Batch.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalStockIn: { $sum: "$quantity" },
+          totalPurchaseValue: { $sum: { $multiply: ["$pricePerUnit", "$quantity"] } }
+        }
+      }
+    ]);
+    
+    const totalStockIn = stockInAgg[0]?.totalStockIn || 0;
+    const totalPurchaseValue = Math.floor(stockInAgg[0]?.totalPurchaseValue || 0);
+
+    // 2. Total stock out (from all sales)
+    const stockOutAgg = await Sale.aggregate([
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: null,
+          totalStockOut: { $sum: "$items.quantitySold" }
+        }
+      }
+    ]);
+    
+    const totalStockOut = stockOutAgg[0]?.totalStockOut || 0;
+
+    // 3. Total available = in - out
+    const totalAvailableStock = totalStockIn - totalStockOut;
+    
+    // 4. Calculate available stock value (proportional to total stock)
+    const availableRatio = totalStockIn > 0 ? totalAvailableStock / totalStockIn : 0;
+    const availablePurchaseValue = Math.floor(totalPurchaseValue * availableRatio);
+
+    // 5. Get category breakdown
+    const categoryAgg = await Batch.aggregate([
+      {
+        $lookup: {
+          from: "medicines",
+          localField: "medicineId",
+          foreignField: "_id",
+          as: "medicine"
+        }
+      },
+      { $unwind: "$medicine" },
+      {
+        $group: {
+          _id: "$medicine.category",
+          totalQuantity: { $sum: "$quantity" },
+          totalValue: { $sum: { $multiply: ["$pricePerUnit", "$quantity"] } }
+        }
+      },
+      { $sort: { totalValue: -1 } }
+    ]);
+
+    const categoryBreakdown = categoryAgg.map(cat => ({
+      category: cat._id || "Uncategorized",
+      totalQuantity: Math.floor(cat.totalQuantity),
+      availableQuantity: Math.floor(cat.totalQuantity * availableRatio),
+      totalValue: Math.floor(cat.totalValue),
+      availableValue: Math.floor(cat.totalValue * availableRatio)
+    }));
+
+    res.status(200).json({
+      status: true,
+      totalStockIn,
+      totalStockOut,
+      totalAvailableStock,
+      totalPurchaseValue,
+      availablePurchaseValue,
+      categoryBreakdown
+    });
+  } catch (err) {
+    console.error("Error calculating available stock value:", err);
+    res.status(500).json({ 
+      status: false, 
+      msg: "Server error", 
+      error: err.message 
+    });
+  }
+};
