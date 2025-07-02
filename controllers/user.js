@@ -8,7 +8,7 @@ const userModel = require("../models/user");
 const { signupSchema, loginSchema, editSchema, passwordSchema } = require("../schema/User");
 
 //Utils
-const { generateToken } = require("../utils/methods");
+const { generateToken } = require("../utils/Methods");
 
 /**
  * @description signup api
